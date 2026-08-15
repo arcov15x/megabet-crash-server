@@ -17,8 +17,9 @@ const GAME_STATE = {
 let currentState = GAME_STATE.WAITING;
 let currentMultiplier = 1.00;
 let crashPoint = 1.00;
-let countdownTimer = 10;
+let countdownTimer = 5; // Ajustado para 5 segundos de espera
 let activeBets = new Map();
+let recentHistory = []; // Array para armazenar o histórico dos últimos multiplicadores
 
 function generateCrashPoint() {
   const e = 2 ** 32;
@@ -28,6 +29,7 @@ function generateCrashPoint() {
 }
 
 function startCrashLoop() {
+  // Loop dedicado à contagem regressiva (roda exatamente a cada 1 segundo / 1000ms)
   setInterval(() => {
     if (currentState === GAME_STATE.WAITING) {
       countdownTimer--;
@@ -39,19 +41,33 @@ function startCrashLoop() {
         crashPoint = Math.max(1.01, generateCrashPoint());
         io.emit('game_started', { crashPointTarget: crashPoint });
       }
-    } 
-    else if (currentState === GAME_STATE.RUNNING) {
-      // Ajustado de 0.03 para 0.01 para desacelerar a subida e formar a curva correta
+    }
+  }, 1000);
+
+  // Loop dedicado ao voo do aviãozinho (roda a cada 100ms)
+  setInterval(() => {
+    if (currentState === GAME_STATE.RUNNING) {
       currentMultiplier += 0.01 * currentMultiplier;
 
       if (currentMultiplier >= crashPoint) {
         currentState = GAME_STATE.CRASHED;
-        io.emit('game_crashed', { finalMultiplier: crashPoint });
+        
+        // Adiciona o resultado ao histórico (mantém os últimos 10)
+        let finalVal = parseFloat(crashPoint.toFixed(2));
+        recentHistory.unshift(finalVal);
+        if (recentHistory.length > 10) recentHistory.pop();
+
+        // Emite o evento de crash enviando também o histórico atualizado
+        io.emit('game_crashed', { 
+          finalMultiplier: finalVal,
+          history: recentHistory 
+        });
+
         activeBets.clear();
 
         setTimeout(() => {
           currentState = GAME_STATE.WAITING;
-          countdownTimer = 10;
+          countdownTimer = 5; // Reseta para 5 segundos
           currentMultiplier = 1.00;
         }, 3000);
       } else {
@@ -62,10 +78,12 @@ function startCrashLoop() {
 }
 
 io.on('connection', (socket) => {
+  // Envia o estado atual e o histórico para o cliente que acabou de entrar
   socket.emit('sync_state', {
     state: currentState,
     multiplier: parseFloat(currentMultiplier.toFixed(2)),
-    countdown: countdownTimer
+    countdown: countdownTimer,
+    history: recentHistory
   });
 
   socket.on('place_bet', (data) => {
