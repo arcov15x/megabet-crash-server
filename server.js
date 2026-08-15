@@ -41,7 +41,8 @@ function startCrashLoop() {
       }
     } 
     else if (currentState === GAME_STATE.RUNNING) {
-      currentMultiplier += 0.03 * currentMultiplier;
+      // Ajustado de 0.03 para 0.01 para desacelerar a subida e formar a curva correta
+      currentMultiplier += 0.01 * currentMultiplier;
 
       if (currentMultiplier >= crashPoint) {
         currentState = GAME_STATE.CRASHED;
