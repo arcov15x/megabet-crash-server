@@ -16,20 +16,21 @@ const GAME_STATE = {
 
 let currentState = GAME_STATE.WAITING;
 let currentMultiplier = 1.00;
-let crashPoint = 1.00;
-let countdownTimer = 5; // Ajustado para 5 segundos de espera
+let crashPoint = 1.01; // Início seguro
+let countdownTimer = 5;
 let activeBets = new Map();
-let recentHistory = []; // Array para armazenar o histórico dos últimos multiplicadores
+let recentHistory = [];
 
 function generateCrashPoint() {
   const e = 2 ** 32;
   const h = Math.floor(Math.random() * e);
-  if (h % 33 === 0) return 1.00;
-  return parseFloat((((100 * e - h) / (e - h)) / 100).toFixed(2));
+  // Garante que o multiplicador nunca seja 1.00 ou menor
+  let val = (((100 * e - h) / (e - h)) / 100);
+  return Math.max(1.01, parseFloat(val.toFixed(2)));
 }
 
 function startCrashLoop() {
-  // Loop dedicado à contagem regressiva (roda exatamente a cada 1 segundo / 1000ms)
+  // Loop de contagem regressiva (1s)
   setInterval(() => {
     if (currentState === GAME_STATE.WAITING) {
       countdownTimer--;
@@ -38,13 +39,13 @@ function startCrashLoop() {
       if (countdownTimer <= 0) {
         currentState = GAME_STATE.RUNNING;
         currentMultiplier = 1.00;
-        crashPoint = Math.max(1.01, generateCrashPoint());
+        crashPoint = generateCrashPoint();
         io.emit('game_started', { crashPointTarget: crashPoint });
       }
     }
   }, 1000);
 
-  // Loop dedicado ao voo do aviãozinho (roda a cada 100ms)
+  // Loop de voo (100ms)
   setInterval(() => {
     if (currentState === GAME_STATE.RUNNING) {
       currentMultiplier += 0.01 * currentMultiplier;
@@ -52,12 +53,14 @@ function startCrashLoop() {
       if (currentMultiplier >= crashPoint) {
         currentState = GAME_STATE.CRASHED;
         
-        // Adiciona o resultado ao histórico (mantém os últimos 10)
-        let finalVal = parseFloat(crashPoint.toFixed(2));
-        recentHistory.unshift(finalVal);
-        if (recentHistory.length > 10) recentHistory.pop();
+        let finalVal = Math.max(1.01, parseFloat(crashPoint.toFixed(2)));
+        
+        // SEGURANÇA: Só adiciona ao histórico se for válido e maior que 1.00
+        if (finalVal > 1.00) {
+            recentHistory.unshift(finalVal);
+            if (recentHistory.length > 10) recentHistory.pop();
+        }
 
-        // Emite o evento de crash enviando também o histórico atualizado
         io.emit('game_crashed', { 
           finalMultiplier: finalVal,
           history: recentHistory 
@@ -67,7 +70,7 @@ function startCrashLoop() {
 
         setTimeout(() => {
           currentState = GAME_STATE.WAITING;
-          countdownTimer = 5; // Reseta para 5 segundos
+          countdownTimer = 5;
           currentMultiplier = 1.00;
         }, 3000);
       } else {
@@ -78,37 +81,26 @@ function startCrashLoop() {
 }
 
 io.on('connection', (socket) => {
-  // Envia o estado atual e o histórico para o cliente que acabou de entrar
+  // Filtro extra: Remove qualquer valor inválido do histórico antes de enviar ao cliente
+  const cleanedHistory = recentHistory.filter(val => val > 1.00);
+  
   socket.emit('sync_state', {
     state: currentState,
     multiplier: parseFloat(currentMultiplier.toFixed(2)),
     countdown: countdownTimer,
-    history: recentHistory
+    history: cleanedHistory
   });
 
   socket.on('place_bet', (data) => {
     if (currentState === GAME_STATE.WAITING) {
       activeBets.set(data.user_id, { amount: data.amount, cashedOut: false });
       socket.emit('bet_accepted', { success: true });
-    } else {
-      socket.emit('bet_rejected', { reason: 'Aguarde a próxima ronda.' });
-    }
-  });
-
-  socket.on('cash_out', (data) => {
-    if (currentState === GAME_STATE.RUNNING && activeBets.has(data.user_id)) {
-      let bet = activeBets.get(data.user_id);
-      if (!bet.cashedOut) {
-        bet.cashedOut = true;
-        let winnings = bet.amount * currentMultiplier;
-        socket.emit('cash_out_success', { multiplier: currentMultiplier, winnings: winnings.toFixed(2) });
-      }
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Servidor Crash rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
   startCrashLoop();
 });
